@@ -1,8 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Float, OrbitControls, Text, Torus, Environment, Stars } from "@react-three/drei";
+<<<<<<< HEAD
 import { Play, Pause, RotateCcw, Upload, Music4, Video, Waves } from "lucide-react";
 import { SpeedInsights } from "@vercel/speed-insights/react";
+=======
+import { Play, Pause, RotateCcw, Square, Upload, Music4, Video, Waves } from "lucide-react";
+>>>>>>> 076bf89 (update App.jsx)
 
 function NeonOrb({ isPlaying, progress, completedLoops, targetLoops }) {
   const group = useRef();
@@ -14,7 +18,6 @@ function NeonOrb({ isPlaying, progress, completedLoops, targetLoops }) {
     if (!group.current || !ringA.current || !ringB.current) return;
 
     const speed = isPlaying ? 1.4 : 0.35;
-
     group.current.rotation.y += delta * speed * 0.45;
     group.current.rotation.x = Math.sin(state.clock.elapsedTime * 0.35) * 0.18;
 
@@ -119,6 +122,9 @@ export default function App() {
   const mediaRef = useRef(null);
   const objectUrlRef = useRef(null);
   const fileInputRef = useRef(null);
+  const wakeLockRef = useRef(null);
+  const restartTimeoutRef = useRef(null);
+  const isStoppedRef = useRef(false);
 
   const [fileName, setFileName] = useState("No media selected");
   const [mediaType, setMediaType] = useState("audio");
@@ -136,8 +142,66 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
+      releaseWakeLock();
     };
   }, []);
+
+  useEffect(() => {
+    const handleVisibility = async () => {
+      if (document.visibilityState === "visible" && isPlaying) {
+        await requestWakeLock();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: fileName || "3D Loop Reciter",
+      artist: "Loop Reciter",
+      album: "3D Loop Reciter"
+    });
+
+    navigator.mediaSession.setActionHandler("play", async () => {
+      await handlePlay();
+    });
+
+    navigator.mediaSession.setActionHandler("pause", () => {
+      handlePause();
+    });
+
+    navigator.mediaSession.setActionHandler("stop", () => {
+      handleStop();
+    });
+
+    navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+  }, [fileName, isPlaying]);
+
+  async function requestWakeLock() {
+    try {
+      if ("wakeLock" in navigator && !wakeLockRef.current) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch (error) {
+      console.error("Wake lock request failed:", error);
+    }
+  }
+
+  async function releaseWakeLock() {
+    try {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+    } catch (error) {
+      console.error("Wake lock release failed:", error);
+    }
+  }
 
   const attachMediaHandlers = (element) => {
     if (!element) return;
@@ -151,38 +215,47 @@ export default function App() {
       setCurrentTime(element.currentTime || 0);
     };
 
-    element.onplay = () => {
+    element.onplay = async () => {
       setIsPlaying(true);
       setStatus("Playback in progress.");
+      await requestWakeLock();
     };
 
-    element.onpause = () => {
+    element.onpause = async () => {
       setIsPlaying(false);
-      if (!isTargetReached) setStatus("Playback paused.");
+      if (!isTargetReached && !isStoppedRef.current) {
+        setStatus("Playback paused.");
+      }
+      await releaseWakeLock();
     };
 
     element.onended = async () => {
+      if (isStoppedRef.current) return;
+
       setCompletedLoops((prev) => {
         const next = prev + 1;
 
         if (next >= targetLoops) {
-          setStatus(`Target completed. Played ${next} time${next > 1 ? "s" : ""}.`);
+          setStatus(`Target completed. Played ${next} times.`);
           setIsPlaying(false);
+          releaseWakeLock();
           return next;
         }
 
-        setTimeout(async () => {
-          if (!mediaRef.current) return;
+        restartTimeoutRef.current = setTimeout(async () => {
+          if (!mediaRef.current || isStoppedRef.current) return;
+
           mediaRef.current.currentTime = 0;
 
           try {
             await mediaRef.current.play();
             setStatus(`Auto-loop running: ${next}/${targetLoops}`);
-          } catch {
-            setStatus("Autoplay was interrupted. Press Play to continue the loop.");
+          } catch (error) {
+            console.error("Restart play failed:", error);
+            setStatus("Playback restart was blocked. Press Play to continue.");
             setIsPlaying(false);
           }
-        }, 120);
+        }, 80);
 
         return next;
       });
@@ -199,6 +272,9 @@ export default function App() {
   const handleFileChange = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
+    isStoppedRef.current = false;
 
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
 
@@ -220,6 +296,8 @@ export default function App() {
       return;
     }
 
+    isStoppedRef.current = false;
+
     if (isTargetReached) {
       mediaRef.current.currentTime = 0;
       setCompletedLoops(0);
@@ -227,21 +305,44 @@ export default function App() {
     }
 
     try {
+      await requestWakeLock();
       await mediaRef.current.play();
       setIsPlaying(true);
-    } catch {
-      setStatus("Unable to start playback. Try tapping Play again.");
+    } catch (error) {
+      console.error("Play failed:", error);
+      setStatus("Unable to start playback. Tap Play again.");
     }
   };
 
   const handlePause = () => {
+    isStoppedRef.current = false;
     mediaRef.current?.pause();
     setIsPlaying(false);
     setStatus("Playback paused.");
   };
 
+  const handleStop = async () => {
+    isStoppedRef.current = true;
+
+    if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
+
+    if (mediaRef.current) {
+      mediaRef.current.pause();
+      mediaRef.current.currentTime = 0;
+    }
+
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setCompletedLoops(0);
+    setStatus("Playback stopped. Counter reset to 0.");
+    await releaseWakeLock();
+  };
+
   const handleReplay = async () => {
     if (!mediaRef.current || !mediaSrc) return;
+
+    isStoppedRef.current = false;
+    if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current);
 
     mediaRef.current.pause();
     mediaRef.current.currentTime = 0;
@@ -250,9 +351,11 @@ export default function App() {
     setStatus("Replay started. Counter reset to 0.");
 
     try {
+      await requestWakeLock();
       await mediaRef.current.play();
       setIsPlaying(true);
-    } catch {
+    } catch (error) {
+      console.error("Replay failed:", error);
       setStatus("Replay is ready. Press Play to continue.");
       setIsPlaying(false);
     }
@@ -350,23 +453,19 @@ export default function App() {
                 onChange={(e) => setTargetLoops(Math.max(1, Number(e.target.value) || 1))}
                 className="w-full rounded-2xl border border-white/10 bg-slate-900 px-4 py-3 text-lg outline-none"
               />
-              <p className="mt-2 text-xs text-slate-400">
-                Set this to 108 for mantra recitation, affirmations, practice loops, or any repeated playback session.
-              </p>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-4 gap-3">
               <ControlButton icon={Play} label="Play" onClick={handlePlay} />
               <ControlButton icon={Pause} label="Pause" onClick={handlePause} />
               <ControlButton icon={RotateCcw} label="Replay" onClick={handleReplay} />
+              <ControlButton icon={Square} label="Stop" onClick={handleStop} />
             </div>
 
             <div className="overflow-hidden rounded-[26px] border border-white/10 bg-black/30 p-3">
               <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-[0.2em] text-slate-400">
                 <span>Loop progress</span>
-                <span>
-                  {Math.min(completedLoops, targetLoops)}/{targetLoops}
-                </span>
+                <span>{Math.min(completedLoops, targetLoops)}/{targetLoops}</span>
               </div>
               <div className="h-3 overflow-hidden rounded-full bg-white/10">
                 <div
@@ -386,7 +485,9 @@ export default function App() {
                   src={mediaSrc}
                   controls
                   playsInline
-                  className={`w-full rounded-2xl bg-black ${mediaType === "video" ? "aspect-video" : "h-16"}`}
+                  preload="auto"
+                  className={`w-full rounded-2xl bg-black ${mediaType === "video" ? "aspect-video" : "h-16"
+                    }`}
                 />
               </div>
             ) : (
