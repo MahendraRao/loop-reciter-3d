@@ -1,12 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Float, OrbitControls, Text, Torus, Environment, Stars } from "@react-three/drei";
-<<<<<<< HEAD
-import { Play, Pause, RotateCcw, Upload, Music4, Video, Waves } from "lucide-react";
-import { SpeedInsights } from "@vercel/speed-insights/react";
-=======
 import { Play, Pause, RotateCcw, Square, Upload, Music4, Video, Waves } from "lucide-react";
->>>>>>> 076bf89 (update App.jsx)
 
 function NeonOrb({ isPlaying, progress, completedLoops, targetLoops }) {
   const group = useRef();
@@ -498,7 +493,6 @@ export default function App() {
           </section>
         </div>
       </div>
-      <SpeedInsights />
     </div>
   );
 }
